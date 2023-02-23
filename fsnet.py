@@ -192,7 +192,7 @@ if __name__ == "__main__":
     # summary(model, input_data=(x,))
 
     model = FSnet(
-        f_input_size=5,
+        f_input_size=7,
         f_hidden_size=32,
         f_output_size=16,
         s_in_channels=3,
@@ -205,6 +205,6 @@ if __name__ == "__main__":
         s_res_padding=1,
         s_num_res_blocks=6,
     )
-    f_input = torch.randn(1, 5)
+    f_input = torch.randn(1, 7)
     s_input = torch.randn(1, 3, 1, 1800)
     summary(model, input_data=[f_input, s_input], col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], row_settings=["var_names"])
