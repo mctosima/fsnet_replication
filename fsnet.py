@@ -18,17 +18,20 @@ class FNet(nn.Module):
         self.batchnorm1 = nn.BatchNorm1d(hidden_size)
 
         # 3 layers of FC residual blocks
-        self.fc_res_blocks = nn.ModuleList([
-            nn.Sequential(
+        self.fc_res_blocks = nn.ModuleList()
+        for _ in range(num_res_blocks):
+            self.fc_res_blocks.append(nn.Sequential(
                 nn.Linear(hidden_size, hidden_size),
-                nn.BatchNorm1d(hidden_size),
                 nn.ReLU(),
-            )
-            for _ in range(num_res_blocks)
-        ])
+                nn.Linear(hidden_size, hidden_size),
+            ))
+            self.relu_residual = nn.ReLU()
 
         # fc with 16 output size
-        self.fc5 = nn.Linear(hidden_size, output_size)
+        self.fc5 = nn.Sequential(
+            nn.Linear(hidden_size, output_size),
+            nn.BatchNorm1d(output_size),
+        )
 
         # fc with 1 output size to auxiliar the loss function
         self.fc6 = nn.Linear(hidden_size, 1)
@@ -43,6 +46,7 @@ class FNet(nn.Module):
             residual = x
             x = fc_res_block(x)
             x += residual
+            x = self.relu_residual(x)
 
         # fc with 16 output size
         x_to_concat = self.fc5(x)
@@ -83,9 +87,17 @@ class SNet(nn.Module):
                     stride=res_stride,
                     padding=res_padding,
                 ),
-                nn.BatchNorm2d(out_channels),
                 nn.ReLU(inplace=True),
+                nn.Conv2d(
+                    in_channels=out_channels,
+                    out_channels=out_channels,
+                    kernel_size=res_kernel,
+                    stride=res_stride,
+                    padding=res_padding,
+                ),
             ))
+            self.residual_relu = nn.ReLU(inplace=True)
+        
 
         # adaptive average pooling from 64x600 to 64x3
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 3))
@@ -108,6 +120,7 @@ class SNet(nn.Module):
             residual = x
             x = res_block(x)
             x += residual
+            x = self.residual_relu(x)
 
         # adaptive average pooling from 64x600 to 64x3
         x = self.adaptive_avg_pool(x)
@@ -179,7 +192,7 @@ if __name__ == "__main__":
     # summary(model, input_data=(x,))
 
     model = FSnet(
-        f_input_size=7,
+        f_input_size=5,
         f_hidden_size=32,
         f_output_size=16,
         s_in_channels=3,
@@ -192,6 +205,6 @@ if __name__ == "__main__":
         s_res_padding=1,
         s_num_res_blocks=6,
     )
-    f_input = torch.randn(1, 7)
+    f_input = torch.randn(1, 5)
     s_input = torch.randn(1, 3, 1, 1800)
     summary(model, input_data=[f_input, s_input], col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], row_settings=["var_names"])
