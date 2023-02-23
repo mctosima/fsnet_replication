@@ -10,7 +10,7 @@ Paper: https://ieeexplore.ieee.org/document/9751737
 
 class FNet(nn.Module):
     def __init__(
-        self, input_size: int = 7, hidden_size: int = 32, output_size: int = 16
+        self, input_size: int = 7, hidden_size: int = 32, output_size: int = 16, num_res_blocks: int = 3,
     ):
         super().__init__()
 
@@ -18,12 +18,14 @@ class FNet(nn.Module):
         self.batchnorm1 = nn.BatchNorm1d(hidden_size)
 
         # 3 layers of FC residual blocks
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.batchnorm2 = nn.BatchNorm1d(hidden_size)
-        self.fc3 = nn.Linear(hidden_size, hidden_size)
-        self.batchnorm3 = nn.BatchNorm1d(hidden_size)
-        self.fc4 = nn.Linear(hidden_size, hidden_size)
-        self.batchnorm4 = nn.BatchNorm1d(hidden_size)
+        self.fc_res_blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_size, hidden_size),
+                nn.BatchNorm1d(hidden_size),
+                nn.ReLU(),
+            )
+            for _ in range(num_res_blocks)
+        ])
 
         # fc with 16 output size
         self.fc5 = nn.Linear(hidden_size, output_size)
@@ -32,12 +34,15 @@ class FNet(nn.Module):
         self.fc6 = nn.Linear(hidden_size, 1)
 
     def forward(self, x):
-        x = torch.relu(self.batchnorm1(self.fc1(x)))
+        x = self.fc1(x)
+        x = self.batchnorm1(x)
+        x = torch.relu(x)
 
         # 3 layers of FC residual blocks (no info about the activation function, I used relu)
-        x = torch.relu(self.batchnorm2(self.fc2(x)) + x)
-        x = torch.relu(self.batchnorm3(self.fc3(x)) + x)
-        x = torch.relu(self.batchnorm4(self.fc4(x)) + x)
+        for fc_res_block in self.fc_res_blocks:
+            residual = x
+            x = fc_res_block(x)
+            x += residual
 
         # fc with 16 output size
         x_to_concat = self.fc5(x)
@@ -45,77 +50,42 @@ class FNet(nn.Module):
         # fc with 1 output size to auxiliar the loss function
         x_to_loss = self.fc6(x)
 
-        return x_to_concat, x_to_loss
-
+        return (x_to_concat, x_to_loss)
 
 class SNet(nn.Module):
     def __init__(
         self,
         in_channels: int = 3,
         out_channels: int = 64,
-        conv_kernel: int = (1,3),
+        conv_kernel: int = 1,
         conv_stride: int = 3,
         conv_padding: int = 0,
         res_kernel: int = 3,
         res_stride: int = 1,
         res_padding: int = 1,
+        num_res_blocks: int = 6,
     ):
         super().__init__()
 
         # conv2d layer
-        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=conv_kernel, stride=conv_stride, padding=conv_padding)
+        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=(conv_kernel,in_channels), stride=conv_stride, padding=conv_padding)
 
         self.batchnorm1 = nn.BatchNorm2d(out_channels)
 
         # 6x residual block
-        self.conv2 = nn.Conv2d(
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=res_kernel,
-            stride=res_stride,
-            padding=res_padding,
-        )
-        self.batchnorm2 = nn.BatchNorm2d(out_channels)
-        self.conv3 = nn.Conv2d(
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=res_kernel,
-            stride=res_stride,
-            padding=res_padding,
-        )
-        self.batchnorm3 = nn.BatchNorm2d(out_channels)
-        self.conv4 = nn.Conv2d(
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=res_kernel,
-            stride=res_stride,
-            padding=res_padding,
-        )
-        self.batchnorm4 = nn.BatchNorm2d(out_channels)
-        self.conv5 = nn.Conv2d(
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=res_kernel,
-            stride=res_stride,
-            padding=res_padding,
-        )
-        self.batchnorm5 = nn.BatchNorm2d(out_channels)
-        self.conv6 = nn.Conv2d(
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=res_kernel,
-            stride=res_stride,
-            padding=res_padding,
-        )
-        self.batchnorm6 = nn.BatchNorm2d(out_channels)
-        self.conv7 = nn.Conv2d(
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=res_kernel,
-            stride=res_stride,
-            padding=res_padding,
-        )
-        self.batchnorm7 = nn.BatchNorm2d(out_channels)
+        self.res_blocks = nn.ModuleList()
+        for _ in range(num_res_blocks):
+            self.res_blocks.append(nn.Sequential(
+                nn.Conv2d(
+                    in_channels=out_channels,
+                    out_channels=out_channels,
+                    kernel_size=res_kernel,
+                    stride=res_stride,
+                    padding=res_padding,
+                ),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
+            ))
 
         # adaptive average pooling from 64x600 to 64x3
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 3))
@@ -130,39 +100,72 @@ class SNet(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        print(f"conv1: {x.shape}")
         x = self.batchnorm1(x)
-        print(f"batchnorm1: {x.shape}")
         x = torch.relu(x)
-        print(f"relu: {x.shape}")
 
         # 6x residual block (no info about the activation function, I used relu)
-        x = torch.relu(self.batchnorm2(self.conv2(x)) + x)
-        print(f"conv2: {x.shape}")
-        x = torch.relu(self.batchnorm3(self.conv3(x)) + x)
-        x = torch.relu(self.batchnorm4(self.conv4(x)) + x)
-        x = torch.relu(self.batchnorm5(self.conv5(x)) + x)
-        x = torch.relu(self.batchnorm6(self.conv6(x)) + x)
-        x = torch.relu(self.batchnorm7(self.conv7(x)) + x)
-        print(f"conv7: {x.shape}")
+        for res_block in self.res_blocks:
+            residual = x
+            x = res_block(x)
+            x += residual
 
         # adaptive average pooling from 64x600 to 64x3
         x = self.adaptive_avg_pool(x)
-        print(f"adaptive_avg_pool: {x.shape}")
 
         x = x.view(x.size(0), -1)
-        print(f"view: {x.shape}")
 
         # fc with 64x1 output size
         x = self.fc1(x)
         x_to_concat = self.batchnorm8(x)
-        print(f"fc1: {x.shape}")
 
         # fc for auxiliar the loss function
         x_to_loss = self.fc2(x_to_concat)
-        print(f"fc2: {x_to_loss.shape}")
 
-        return x_to_concat, x_to_loss
+        return (x_to_concat, x_to_loss)
+    
+class FSnet(nn.Module):
+    def __init__(
+        self,
+        f_input_size: int = 7,
+        f_hidden_size: int = 32,
+        f_output_size: int = 16,
+        s_in_channels: int = 3,
+        s_out_channels: int = 64,
+        s_conv_kernel: int = 1,
+        s_conv_stride: int = 3,
+        s_conv_padding: int = 0,
+        s_res_kernel: int = 3,
+        s_res_stride: int = 1,
+        s_res_padding: int = 1,
+        s_num_res_blocks: int = 6,
+    ):
+        super().__init__()
+
+        self.fnet = FNet(input_size=f_input_size, hidden_size=f_hidden_size, output_size=f_output_size)
+        self.snet = SNet(in_channels=s_in_channels,
+                         out_channels=s_out_channels,
+                         conv_kernel=s_conv_kernel,
+                         conv_stride=s_conv_stride,
+                         conv_padding=s_conv_padding,
+                         res_kernel=s_res_kernel,
+                         res_stride=s_res_stride,
+                         res_padding=s_res_padding,
+                         num_res_blocks=s_num_res_blocks)
+        
+        self.fc1 = nn.Linear(80, 8)
+        self.fc2 = nn.Linear(8, 1)
+
+    def forward(self, f_input, s_input):
+        f_out, f_loss = self.fnet(f_input)
+        s_out, s_loss = self.snet(s_input)
+
+        fs_cat = torch.cat((f_out, s_out), dim=1)
+        fs_fc1 = self.fc1(fs_cat)
+        out = self.fc2(fs_fc1)
+
+        return f_out, s_out, out
+
+
     
 
 if __name__ == "__main__":
@@ -170,6 +173,24 @@ if __name__ == "__main__":
     # x = torch.randn(1, 7)
     # summary(model, input_data=(x,))
 
-    model = SNet()
-    x = torch.randn(1, 3, 1, 1800)
-    summary(model, input_data=(x,))
+    # model = SNet()
+    # x = torch.randn(1, 3, 1, 1800)
+    # summary(model, input_data=(x,))
+
+    model = FSnet(
+        f_input_size=7,
+        f_hidden_size=32,
+        f_output_size=16,
+        s_in_channels=3,
+        s_out_channels=64,
+        s_conv_kernel=1,
+        s_conv_stride=3,
+        s_conv_padding=0,
+        s_res_kernel=3,
+        s_res_stride=1,
+        s_res_padding=1,
+        s_num_res_blocks=6,
+    )
+    f_input = torch.randn(1, 7)
+    s_input = torch.randn(1, 3, 1, 1800)
+    summary(model, input_data=[f_input, s_input], col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], row_settings=["var_names"])
