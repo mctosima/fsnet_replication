@@ -164,6 +164,7 @@ class FSnet(nn.Module):
         out = self.fc2(fs_fc1)
 
         return f_out, s_out, out
+        # to compute loss: f_loss + s_loss + out before loss.backdward()
 
 
     
